@@ -68,7 +68,7 @@ export function LandingPage() {
           <div className="w-full rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-[#0A0E17] min-h-[320px] flex items-center justify-center relative">
             {!heroImgFailed ? (
               <img
-                src="/src/assets/images/soulhub_hero_architecture_1795710290241.jpg"
+                src={`${import.meta.env.BASE_URL}src/assets/images/soulhub_hero_architecture_1795710290241.jpg`}
                 alt="SOUL HUB orbital modular code architecture"
                 referrerPolicy="no-referrer"
                 onError={() => setHeroImgFailed(true)}

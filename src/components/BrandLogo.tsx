@@ -13,7 +13,7 @@ export function BrandLogo({
     <span className="inline-flex items-center gap-2.5 whitespace-nowrap shrink-0">
       {!imgFailed ? (
         <img
-          src="/src/assets/images/soulhub_brand_emblem_1795710290700.jpg"
+          src={`${import.meta.env.BASE_URL}src/assets/images/soulhub_brand_emblem_1795710290700.jpg`}
           alt="SOUL HUB emblem"
           width={size}
           height={size}

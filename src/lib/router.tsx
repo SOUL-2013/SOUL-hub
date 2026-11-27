@@ -12,15 +12,36 @@ const RouterContext = createContext<RouterContextValue>({
   navigate: () => {},
 });
 
+function getBasePrefix(): string {
+  const raw = (import.meta.env.BASE_URL || '/').replace(/\/+$/, '');
+  return raw === '' || raw === '.' ? '' : raw;
+}
+
+function stripBase(fullPath: string): string {
+  const base = getBasePrefix();
+  if (!base) return fullPath || '/';
+  if (fullPath === base || fullPath === `${base}/`) return '/';
+  if (fullPath.startsWith(`${base}/`)) {
+    return fullPath.slice(base.length) || '/';
+  }
+  return fullPath || '/';
+}
+
+function withBase(appPath: string): string {
+  const base = getBasePrefix();
+  const clean = appPath.startsWith('/') ? appPath : `/${appPath}`;
+  return `${base}${clean}`;
+}
+
 export function RouterProvider({ children }: { children: React.ReactNode }) {
   const [loc, setLoc] = useState(() => ({
-    pathname: typeof window !== 'undefined' ? window.location.pathname : '/',
+    pathname: typeof window !== 'undefined' ? stripBase(window.location.pathname) : '/',
     search: typeof window !== 'undefined' ? window.location.search : '',
   }));
 
   useEffect(() => {
     const onPop = () => {
-      setLoc({ pathname: window.location.pathname, search: window.location.search });
+      setLoc({ pathname: stripBase(window.location.pathname), search: window.location.search });
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
@@ -34,7 +55,7 @@ export function RouterProvider({ children }: { children: React.ReactNode }) {
     const [pathPart, searchPart] = to.split('?');
     const nextPath = pathPart || '/';
     const nextSearch = searchPart ? `?${searchPart}` : '';
-    window.history.pushState({}, '', `${nextPath}${nextSearch}`);
+    window.history.pushState({}, '', `${withBase(nextPath)}${nextSearch}`);
     setLoc({ pathname: nextPath, search: nextSearch });
     window.scrollTo({ top: 0, behavior: 'auto' });
   }, []);
@@ -54,9 +75,10 @@ export function Link({
   ...rest
 }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { to: string }) {
   const { navigate } = useRouter();
+  const href = to.startsWith('http://') || to.startsWith('https://') ? to : withBase(to);
   return (
     <a
-      href={to}
+      href={href}
       className={className}
       onClick={(e) => {
         if (onClick) onClick(e);

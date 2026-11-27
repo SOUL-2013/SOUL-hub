@@ -27,7 +27,7 @@ export function ProfilePage({ username, subtab = 'overview' }: { username: strin
             username: 'soul-labs',
             displayName: 'Soumadip Orbit Universal Labs',
             bio: 'Official engineering organization building SOUL HUB and open developer infrastructure.',
-            avatarUrl: '/src/assets/images/soulhub_avatar_founder_1795710292346.jpg',
+            avatarUrl: `${import.meta.env.BASE_URL}src/assets/images/soulhub_avatar_founder_1795710292346.jpg`,
             location: 'Global Orbit',
             company: 'SOUL',
             website: 'https://soumadiporbit.dev',
