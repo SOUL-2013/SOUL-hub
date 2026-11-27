@@ -961,6 +961,10 @@ async function startServer(): Promise<void> {
     const owner = String(req.params.owner);
     const repo = String(req.params.repo);
     const deployId = String(req.params.deployId);
+    if (!req.path.endsWith('/')) {
+      res.redirect(301, `${req.path}/`);
+      return;
+    }
     const resolved = resolveDeployedSiteFile(owner, repo, 'index.html', deployId);
     if (!resolved) {
       res.status(404).send('Preview deployment not found.');
@@ -984,6 +988,10 @@ async function startServer(): Promise<void> {
   app.get('/sites/:owner/:repo', (req, res) => {
     const owner = String(req.params.owner);
     const repo = String(req.params.repo);
+    if (!req.path.endsWith('/')) {
+      res.redirect(301, `${req.path}/`);
+      return;
+    }
     const resolved = resolveDeployedSiteFile(owner, repo, 'index.html');
     if (!resolved) {
       res.status(404).send('No active deployment found for this repository.');
@@ -995,7 +1003,15 @@ async function startServer(): Promise<void> {
   // -------------------------------------------------------
   // Vite Dev Middleware or Production Static Bundle
   // -------------------------------------------------------
-  if (process.env.NODE_ENV !== 'production') {
+  const distDir = path.resolve('./dist');
+  const isDevLifecycle =
+    process.env.npm_lifecycle_event === 'dev' ||
+    process.execArgv.some((arg) => arg.includes('tsx'));
+  const useProductionDist =
+    process.env.NODE_ENV === 'production' ||
+    (!isDevLifecycle && fs.existsSync(path.join(distDir, 'index.html')));
+
+  if (!useProductionDist) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -1003,7 +1019,6 @@ async function startServer(): Promise<void> {
     });
     app.use(vite.middlewares);
   } else {
-    const distDir = path.resolve('./dist');
     app.use(express.static(distDir));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distDir, 'index.html'));

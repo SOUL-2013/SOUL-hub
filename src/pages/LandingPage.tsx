@@ -12,8 +12,8 @@ export function LandingPage() {
   useEffect(() => {
     gitApi
       .getShowcase()
-      .then((res) => setShowcase(res.repositories))
-      .catch(() => {})
+      .then((res) => setShowcase(Array.isArray(res?.repositories) ? res.repositories : []))
+      .catch(() => setShowcase([]))
       .finally(() => setShowcaseLoading(false));
   }, []);
 

@@ -18,11 +18,17 @@ export async function apiRequest<T>(url: string, options: RequestInit = {}): Pro
 
   const res = await fetch(url, { ...options, headers });
   const text = await res.text();
+  const contentType = res.headers.get('content-type') || '';
   let data: Record<string, unknown> = {};
-  try {
-    data = text ? (JSON.parse(text) as Record<string, unknown>) : {};
-  } catch {
-    if (!res.ok) throw new Error(text || `Request failed (${res.status})`);
+  if (text) {
+    try {
+      data = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      if (!res.ok) throw new Error(text || `Request failed (${res.status})`);
+      if (contentType.includes('text/html') || text.trimStart().startsWith('<')) {
+        throw new Error('Backend API server is not running for this route.');
+      }
+    }
   }
   if (!res.ok) {
     throw new Error((data.error as string | undefined) || `Request failed (${res.status})`);

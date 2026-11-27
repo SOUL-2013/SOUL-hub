@@ -80,9 +80,24 @@ export async function deployStaticSiteFromGit(
     fs.mkdirSync(extractDir, { recursive: true });
     await execFileAsync('tar', ['-xf', tarPath, '-C', extractDir]);
 
-    const sourceOutputPath = outputDir === '.' ? extractDir : resolveConfinedPath(extractDir, outputDir);
+    let effectiveOutputDir = outputDir;
+    let sourceOutputPath = outputDir === '.' ? extractDir : resolveConfinedPath(extractDir, outputDir);
+    if (outputDir === '.' && sourceOutputPath) {
+      const rootIndex = path.join(extractDir, 'index.html');
+      const distDir = path.join(extractDir, 'dist');
+      const distIndex = path.join(distDir, 'index.html');
+      if (fs.existsSync(distIndex)) {
+        const rootHtml = fs.existsSync(rootIndex) ? fs.readFileSync(rootIndex, 'utf8') : '';
+        if (!rootHtml || /\/src\/main\.(tsx?|jsx?)/.test(rootHtml)) {
+          sourceOutputPath = distDir;
+          effectiveOutputDir = 'dist';
+          logs.push('Detected Vite source root with prebuilt dist/ bundle; publishing dist/ static assets.');
+        }
+      }
+    }
+
     if (!sourceOutputPath || !fs.existsSync(sourceOutputPath)) {
-      logs.push(`ERROR: Output directory "${outputDir}" not found in commit ${commitSha.slice(0, 12)}.`);
+      logs.push(`ERROR: Output directory "${effectiveOutputDir}" not found in commit ${commitSha.slice(0, 12)}.`);
       return {
         deploymentId,
         commitSha,
@@ -103,6 +118,33 @@ export async function deployStaticSiteFromGit(
     const stats = { count: 0, bytes: 0 };
     copyStaticDirectory(sourceOutputPath, targetDir, stats);
 
+    // Rewrite root-relative asset URLs inside HTML files when those files exist in targetDir
+    // so Vite/React dist builds work cleanly under /sites/:owner/:repo/ without white-screening.
+    const rewriteHtmlDir = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          rewriteHtmlDir(full);
+        } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.html')) {
+          const html = fs.readFileSync(full, 'utf8');
+          const rewritten = html.replace(
+            /(src|href)=["']\/(?!\/|sites\/|api\/)([^"']+)["']/gi,
+            (match, attr: string, assetPath: string) => {
+              const localTarget = resolveConfinedPath(targetDir, assetPath.split('?')[0]);
+              if (localTarget && fs.existsSync(localTarget)) {
+                return `${attr}="./${assetPath}"`;
+              }
+              return match;
+            }
+          );
+          if (rewritten !== html) {
+            fs.writeFileSync(full, rewritten, 'utf8');
+          }
+        }
+      }
+    };
+    rewriteHtmlDir(targetDir);
+
     if (stats.count === 0) {
       logs.push('ERROR: No deployable static assets found in output directory.');
       return {
@@ -120,11 +162,11 @@ export async function deployStaticSiteFromGit(
     const activeFile = path.join(siteRoot, 'active.json');
     fs.writeFileSync(
       activeFile,
-      JSON.stringify({ deploymentId, commitSha, branch, outputDir, updatedAt: new Date().toISOString() }, null, 2),
+      JSON.stringify({ deploymentId, commitSha, branch, outputDir: effectiveOutputDir, updatedAt: new Date().toISOString() }, null, 2),
       'utf8'
     );
 
-    logs.push(`Copied ${stats.count} static files (${stats.bytes} bytes) from "${outputDir}".`);
+    logs.push(`Copied ${stats.count} static files (${stats.bytes} bytes) from "${effectiveOutputDir}".`);
     logs.push(`Published live at /sites/${owner}/${repo}/`);
 
     return {
@@ -195,7 +237,7 @@ export function resolveDeployedSiteFile(
     return indexCandidate;
   }
   const rootFallback = path.join(releaseDir, 'index.html');
-  if (cleanSub === 'index.html' && fs.existsSync(rootFallback)) {
+  if ((cleanSub === 'index.html' || !path.extname(cleanSub)) && fs.existsSync(rootFallback)) {
     return rootFallback;
   }
   return null;

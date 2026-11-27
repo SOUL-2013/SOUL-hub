@@ -40,7 +40,8 @@ export function ProfilePage({ username, subtab = 'overview' }: { username: strin
             firestoreRepo.listPublicRepositories(20).catch(() => []),
             gitApi.getShowcase().catch(() => ({ repositories: [] })),
           ]);
-          const showcaseRepos: RepositoryDoc[] = showcase.repositories.map((s) => ({
+          const showcaseList = Array.isArray(showcase?.repositories) ? showcase.repositories : [];
+          const showcaseRepos: RepositoryDoc[] = showcaseList.map((s) => ({
             ...s,
             isArchived: false,
             isShowcase: true,

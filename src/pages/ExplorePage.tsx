@@ -26,14 +26,15 @@ export function ExplorePage({ mode }: { mode: 'explore' | 'trending' | 'search' 
       setLoading(true);
       try {
         const [showcaseRes, firestoreRepos, profiles] = await Promise.all([
-          gitApi.getShowcase(),
+          gitApi.getShowcase().catch(() => ({ repositories: [] })),
           firestoreRepo.listPublicRepositories(50).catch(() => []),
           firestoreRepo.listPublicProfiles(30).catch(() => []),
         ]);
         if (!active) return;
 
         const merged = new Map<string, RepositoryDoc>();
-        showcaseRes.repositories.forEach((s: ShowcaseRepoResponse) => {
+        const showcaseList = Array.isArray(showcaseRes?.repositories) ? showcaseRes.repositories : [];
+        showcaseList.forEach((s: ShowcaseRepoResponse) => {
           merged.set(s.fullName, { ...s, isArchived: false, isShowcase: true });
         });
         firestoreRepos.forEach((r) => {

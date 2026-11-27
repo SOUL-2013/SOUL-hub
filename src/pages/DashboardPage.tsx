@@ -20,11 +20,11 @@ export function DashboardPage() {
       setLoading(true);
       try {
         const [showcaseRes, actList] = await Promise.all([
-          gitApi.getShowcase(),
-          firestoreRepo.listPublicActivity(12),
+          gitApi.getShowcase().catch(() => ({ repositories: [] })),
+          firestoreRepo.listPublicActivity(12).catch(() => []),
         ]);
         if (!active) return;
-        setShowcase(showcaseRes.repositories);
+        setShowcase(Array.isArray(showcaseRes?.repositories) ? showcaseRes.repositories : []);
         setActivity(actList);
 
         if (firebaseUser) {
