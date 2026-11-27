@@ -1,0 +1,1168 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---------------------------------------------------------
+    // Global Hardened Primitives
+    // ---------------------------------------------------------
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidUsername(u) {
+      return u is string && u.size() >= 3 && u.size() <= 32 && u.matches('^[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]$');
+    }
+
+    function isValidSlug(s) {
+      return s is string && s.size() >= 1 && s.size() <= 80 && s.matches('^[a-z0-9][a-z0-9._\\-]{0,78}[a-z0-9]?$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        request.auth.token.email == 'quantum20007@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isStr(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function isBoundedStrList(arr, maxItems) {
+      return arr is list && arr.size() <= maxItems && (arr.size() == 0 || (arr[0] is string && arr[0].size() <= 128));
+    }
+
+    function repoPath(repoId) {
+      return /databases/$(database)/documents/repositories/$(repoId);
+    }
+
+    function repoExists(repoId) {
+      return exists(repoPath(repoId));
+    }
+
+    function getRepo(repoId) {
+      return get(repoPath(repoId)).data;
+    }
+
+    function isRepoMember(repoId) {
+      return isSignedIn() && exists(/databases/$(database)/documents/repositories/$(repoId)/members/$(request.auth.uid));
+    }
+
+    function getRepoMemberRole(repoId) {
+      return get(/databases/$(database)/documents/repositories/$(repoId)/members/$(request.auth.uid)).data.role;
+    }
+
+    function canReadRepo(repoId) {
+      return repoExists(repoId) && (
+        getRepo(repoId).visibility == 'public' ||
+        (isSignedIn() && (getRepo(repoId).ownerId == request.auth.uid || isRepoMember(repoId))) ||
+        isAdmin()
+      );
+    }
+
+    function canWriteRepo(repoId) {
+      return isVerifiedUser() && repoExists(repoId) && (
+        getRepo(repoId).ownerId == request.auth.uid ||
+        (isRepoMember(repoId) && getRepoMemberRole(repoId) in ['owner', 'maintainer', 'developer']) ||
+        isAdmin()
+      );
+    }
+
+    function isRepoOwnerOrMaintainer(repoId) {
+      return isVerifiedUser() && repoExists(repoId) && (
+        getRepo(repoId).ownerId == request.auth.uid ||
+        (isRepoMember(repoId) && getRepoMemberRole(repoId) in ['owner', 'maintainer']) ||
+        isAdmin()
+      );
+    }
+
+    function orgExists(orgId) {
+      return exists(/databases/$(database)/documents/organizations/$(orgId));
+    }
+
+    function getOrg(orgId) {
+      return get(/databases/$(database)/documents/organizations/$(orgId)).data;
+    }
+
+    function isOrgMember(orgId) {
+      return isSignedIn() && exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid));
+    }
+
+    function isOrgAdminOrOwner(orgId) {
+      return isVerifiedUser() && orgExists(orgId) && (
+        getOrg(orgId).ownerId == request.auth.uid ||
+        (isOrgMember(orgId) && get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data.role in ['owner', 'admin']) ||
+        isAdmin()
+      );
+    }
+
+    // ---------------------------------------------------------
+    // Health / Connection Test Document
+    // ---------------------------------------------------------
+    match /test/connection {
+      allow get: if true;
+    }
+
+    // ---------------------------------------------------------
+    // Admins Registry
+    // ---------------------------------------------------------
+    match /admins/{uid} {
+      allow get: if isValidId(uid) && (isAdmin() || (isSignedIn() && request.auth.uid == uid));
+      allow list: if isAdmin();
+      allow create, update, delete: if isAdmin() && isValidId(uid);
+    }
+
+    // ---------------------------------------------------------
+    // Public Profiles & PII Isolation
+    // ---------------------------------------------------------
+    function isValidPublicProfile(data, uid) {
+      return data.keys().hasAll(['uid', 'username', 'displayName', 'isPrivateProfile', 'followersCount', 'followingCount', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'uid', 'username', 'displayName', 'bio', 'avatarUrl', 'coverUrl',
+          'website', 'company', 'location', 'statusText', 'socialLinks',
+          'pinnedRepoIds', 'profileReadme', 'isPrivateProfile',
+          'followersCount', 'followingCount', 'createdAt', 'updatedAt'
+        ])
+        && data.uid == uid
+        && isValidUsername(data.username)
+        && isStr(data.displayName, 1, 80)
+        && (!('bio' in data) || isStr(data.bio, 0, 500))
+        && (!('avatarUrl' in data) || isStr(data.avatarUrl, 0, 500))
+        && (!('coverUrl' in data) || isStr(data.coverUrl, 0, 500))
+        && (!('website' in data) || isStr(data.website, 0, 200))
+        && (!('company' in data) || isStr(data.company, 0, 100))
+        && (!('location' in data) || isStr(data.location, 0, 100))
+        && (!('statusText' in data) || isStr(data.statusText, 0, 120))
+        && (!('socialLinks' in data) || isBoundedStrList(data.socialLinks, 6))
+        && (!('pinnedRepoIds' in data) || isBoundedStrList(data.pinnedRepoIds, 6))
+        && (!('profileReadme' in data) || isStr(data.profileReadme, 0, 10000))
+        && data.isPrivateProfile is bool
+        && data.followersCount is number && data.followersCount >= 0
+        && data.followingCount is number && data.followingCount >= 0
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /public_profiles/{uid} {
+      allow get: if isValidId(uid) && (!existing().isPrivateProfile || (isSignedIn() && request.auth.uid == uid) || isAdmin());
+      allow list: if resource.data.isPrivateProfile == false || (isSignedIn() && resource.data.uid == request.auth.uid) || isAdmin();
+      allow create: if isVerifiedUser() && isValidId(uid) && request.auth.uid == uid
+        && isValidPublicProfile(incoming(), uid)
+        && incoming().followersCount == 0
+        && incoming().followingCount == 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(uid)
+        && isValidPublicProfile(incoming(), uid)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            request.auth.uid == uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'username', 'displayName', 'bio', 'avatarUrl', 'coverUrl',
+              'website', 'company', 'location', 'statusText', 'socialLinks',
+              'pinnedRepoIds', 'profileReadme', 'isPrivateProfile', 'updatedAt'
+            ])
+          ) ||
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['followersCount', 'updatedAt']) &&
+            (incoming().followersCount == existing().followersCount + 1 || incoming().followersCount == existing().followersCount - 1)
+          ) ||
+          (
+            request.auth.uid == uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['followingCount', 'updatedAt']) &&
+            (incoming().followingCount == existing().followingCount + 1 || incoming().followingCount == existing().followingCount - 1)
+          )
+        );
+      allow delete: if isValidId(uid) && ((isVerifiedUser() && request.auth.uid == uid) || isAdmin());
+    }
+
+    function isValidPrivateUser(data, uid) {
+      return data.keys().hasAll(['uid', 'email', 'storageUsedBytes', 'quotaLimitBytes', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'uid', 'email', 'blockedUserIds', 'mutedUserIds', 'emailNotifications',
+          'securityAlerts', 'themePreference', 'storageUsedBytes', 'quotaLimitBytes',
+          'isSuspended', 'createdAt', 'updatedAt'
+        ])
+        && data.uid == uid
+        && isStr(data.email, 3, 200)
+        && (!('blockedUserIds' in data) || isBoundedStrList(data.blockedUserIds, 100))
+        && (!('mutedUserIds' in data) || isBoundedStrList(data.mutedUserIds, 100))
+        && (!('emailNotifications' in data) || data.emailNotifications is bool)
+        && (!('securityAlerts' in data) || data.securityAlerts is bool)
+        && (!('themePreference' in data) || data.themePreference in ['dark', 'light'])
+        && data.storageUsedBytes is number && data.storageUsedBytes >= 0
+        && data.quotaLimitBytes is number && data.quotaLimitBytes > 0
+        && (!('isSuspended' in data) || data.isSuspended is bool)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /users_private/{uid} {
+      allow get: if isValidId(uid) && ((isSignedIn() && request.auth.uid == uid) || isAdmin());
+      allow list: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isVerifiedUser() && isValidId(uid) && request.auth.uid == uid
+        && isValidPrivateUser(incoming(), uid)
+        && incoming().email == request.auth.token.email
+        && incoming().storageUsedBytes == 0
+        && incoming().quotaLimitBytes == 52428800
+        && (!('isSuspended' in incoming()) || incoming().isSuspended == false)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(uid)
+        && isValidPrivateUser(incoming(), uid)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            request.auth.uid == uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'blockedUserIds', 'mutedUserIds', 'emailNotifications',
+              'securityAlerts', 'themePreference', 'storageUsedBytes', 'updatedAt'
+            ]) &&
+            incoming().storageUsedBytes <= existing().quotaLimitBytes
+          )
+        );
+      allow delete: if isValidId(uid) && ((isVerifiedUser() && request.auth.uid == uid) || isAdmin());
+    }
+
+    function isValidUsernameReservation(data, username) {
+      return data.keys().hasAll(['uid', 'username', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'username', 'createdAt'])
+        && isValidId(data.uid)
+        && data.username == username
+        && data.createdAt is timestamp;
+    }
+
+    match /usernames/{username} {
+      allow get: if isValidUsername(username);
+      allow list: if resource.data.uid != null;
+      allow create: if isVerifiedUser() && isValidUsername(username)
+        && isValidUsernameReservation(incoming(), username)
+        && incoming().uid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidUsername(username) && ((isVerifiedUser() && existing().uid == request.auth.uid) || isAdmin());
+    }
+
+    // ---------------------------------------------------------
+    // Repositories & Members
+    // ---------------------------------------------------------
+    function isValidRepository(data, repoId) {
+      return data.keys().hasAll([
+          'id', 'ownerId', 'ownerUsername', 'name', 'slug', 'fullName',
+          'visibility', 'defaultBranch', 'isArchived', 'starsCount',
+          'forksCount', 'watchersCount', 'openIssuesCount', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerId', 'ownerUsername', 'name', 'slug', 'fullName',
+          'description', 'visibility', 'defaultBranch', 'topics', 'website',
+          'license', 'primaryLanguage', 'isArchived', 'isTemplate',
+          'starsCount', 'forksCount', 'watchersCount', 'openIssuesCount',
+          'sizeBytes', 'forkedFrom', 'orgId', 'createdAt', 'updatedAt'
+        ])
+        && data.id == repoId
+        && isValidId(data.ownerId)
+        && isValidUsername(data.ownerUsername)
+        && isStr(data.name, 1, 80)
+        && isValidSlug(data.slug)
+        && isStr(data.fullName, 3, 120)
+        && (!('description' in data) || isStr(data.description, 0, 500))
+        && data.visibility in ['public', 'private']
+        && isStr(data.defaultBranch, 1, 64)
+        && (!('topics' in data) || isBoundedStrList(data.topics, 10))
+        && (!('website' in data) || isStr(data.website, 0, 200))
+        && (!('license' in data) || isStr(data.license, 0, 40))
+        && (!('primaryLanguage' in data) || isStr(data.primaryLanguage, 0, 40))
+        && data.isArchived is bool
+        && (!('isTemplate' in data) || data.isTemplate is bool)
+        && data.starsCount is number && data.starsCount >= 0
+        && data.forksCount is number && data.forksCount >= 0
+        && data.watchersCount is number && data.watchersCount >= 0
+        && data.openIssuesCount is number && data.openIssuesCount >= 0
+        && (!('sizeBytes' in data) || (data.sizeBytes is number && data.sizeBytes >= 0))
+        && (!('forkedFrom' in data) || isStr(data.forkedFrom, 0, 128))
+        && (!('orgId' in data) || isStr(data.orgId, 0, 128))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /repositories/{repoId} {
+      allow get: if isValidId(repoId) && (
+        existing().visibility == 'public' ||
+        (isSignedIn() && (existing().ownerId == request.auth.uid || isRepoMember(repoId))) ||
+        isAdmin()
+      );
+      allow list: if resource.data.visibility == 'public' || (isSignedIn() && resource.data.ownerId == request.auth.uid) || isAdmin();
+      allow create: if isVerifiedUser() && isValidId(repoId)
+        && isValidRepository(incoming(), repoId)
+        && incoming().ownerId == request.auth.uid
+        && incoming().starsCount == 0
+        && incoming().forksCount == 0
+        && incoming().watchersCount == 0
+        && incoming().openIssuesCount == 0
+        && incoming().isArchived == false
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(repoId)
+        && isValidRepository(incoming(), repoId)
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            incoming().ownerId == existing().ownerId &&
+            (existing().ownerId == request.auth.uid || isRepoOwnerOrMaintainer(repoId)) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'name', 'description', 'visibility', 'defaultBranch', 'topics',
+              'website', 'license', 'primaryLanguage', 'isArchived', 'isTemplate',
+              'sizeBytes', 'updatedAt'
+            ])
+          ) ||
+          (
+            existing().ownerId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['ownerId', 'ownerUsername', 'fullName', 'updatedAt'])
+          ) ||
+          (
+            (existing().visibility == 'public' || isRepoMember(repoId) || existing().ownerId == request.auth.uid) &&
+            incoming().ownerId == existing().ownerId &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['starsCount', 'updatedAt']) &&
+            (incoming().starsCount == existing().starsCount + 1 || incoming().starsCount == existing().starsCount - 1)
+          ) ||
+          (
+            (existing().visibility == 'public' || isRepoMember(repoId) || existing().ownerId == request.auth.uid) &&
+            incoming().ownerId == existing().ownerId &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['watchersCount', 'updatedAt']) &&
+            (incoming().watchersCount == existing().watchersCount + 1 || incoming().watchersCount == existing().watchersCount - 1)
+          ) ||
+          (
+            (existing().visibility == 'public' || isRepoMember(repoId) || existing().ownerId == request.auth.uid) &&
+            incoming().ownerId == existing().ownerId &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['forksCount', 'updatedAt']) &&
+            incoming().forksCount == existing().forksCount + 1
+          ) ||
+          (
+            (existing().visibility == 'public' || isRepoMember(repoId) || existing().ownerId == request.auth.uid) &&
+            incoming().ownerId == existing().ownerId &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['openIssuesCount', 'updatedAt']) &&
+            (incoming().openIssuesCount == existing().openIssuesCount + 1 || incoming().openIssuesCount == existing().openIssuesCount - 1)
+          )
+        );
+      allow delete: if isValidId(repoId) && ((isVerifiedUser() && existing().ownerId == request.auth.uid) || isAdmin());
+
+      function isValidRepoMember(data, uid) {
+        return data.keys().hasAll(['uid', 'username', 'role', 'addedBy', 'repoVisibility', 'repoOwnerId', 'createdAt'])
+          && data.keys().hasOnly(['uid', 'username', 'role', 'addedBy', 'repoVisibility', 'repoOwnerId', 'createdAt'])
+          && data.uid == uid
+          && isValidUsername(data.username)
+          && data.role in ['owner', 'maintainer', 'developer', 'read']
+          && isValidId(data.addedBy)
+          && data.repoVisibility in ['public', 'private']
+          && isValidId(data.repoOwnerId)
+          && data.createdAt is timestamp;
+      }
+
+      match /members/{uid} {
+        allow get: if isValidId(repoId) && isValidId(uid) && canReadRepo(repoId);
+        allow list: if isValidId(repoId) && (resource.data.repoVisibility == 'public' || (isSignedIn() && (resource.data.uid == request.auth.uid || resource.data.repoOwnerId == request.auth.uid)) || isAdmin());
+        allow create: if isVerifiedUser() && isValidId(repoId) && isValidId(uid)
+          && isValidRepoMember(incoming(), uid)
+          && isRepoOwnerOrMaintainer(repoId)
+          && incoming().addedBy == request.auth.uid
+          && incoming().repoVisibility == getRepo(repoId).visibility
+          && incoming().repoOwnerId == getRepo(repoId).ownerId
+          && incoming().createdAt == request.time;
+        allow update: if isVerifiedUser() && isValidId(repoId) && isValidId(uid)
+          && isValidRepoMember(incoming(), uid)
+          && isRepoOwnerOrMaintainer(repoId)
+          && incoming().uid == existing().uid
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly(['role']);
+        allow delete: if isValidId(repoId) && isValidId(uid) && (isRepoOwnerOrMaintainer(repoId) || (isVerifiedUser() && request.auth.uid == uid));
+      }
+
+      // ---------------------------------------------------------
+      // Issues & Issue Comments
+      // ---------------------------------------------------------
+      function isValidIssue(data, repoId) {
+        return data.keys().hasAll([
+            'repoId', 'repoVisibility', 'repoOwnerId', 'number', 'title',
+            'status', 'authorId', 'authorUsername', 'commentsCount', 'createdAt', 'updatedAt'
+          ])
+          && data.keys().hasOnly([
+            'repoId', 'repoVisibility', 'repoOwnerId', 'number', 'title', 'body',
+            'status', 'authorId', 'authorUsername', 'labels', 'assigneeIds',
+            'milestone', 'dueDate', 'commentsCount', 'createdAt', 'updatedAt'
+          ])
+          && data.repoId == repoId
+          && data.repoVisibility in ['public', 'private']
+          && isValidId(data.repoOwnerId)
+          && data.number is number && data.number >= 1
+          && isStr(data.title, 1, 200)
+          && (!('body' in data) || isStr(data.body, 0, 20000))
+          && data.status in ['open', 'closed']
+          && isValidId(data.authorId)
+          && isValidUsername(data.authorUsername)
+          && (!('labels' in data) || isBoundedStrList(data.labels, 10))
+          && (!('assigneeIds' in data) || isBoundedStrList(data.assigneeIds, 5))
+          && (!('milestone' in data) || isStr(data.milestone, 0, 80))
+          && (!('dueDate' in data) || isStr(data.dueDate, 0, 40))
+          && data.commentsCount is number && data.commentsCount >= 0
+          && data.createdAt is timestamp
+          && data.updatedAt is timestamp;
+      }
+
+      function isValidComment(data, repoId, parentId) {
+        return data.keys().hasAll(['parentId', 'repoId', 'repoVisibility', 'repoOwnerId', 'authorId', 'authorUsername', 'body', 'createdAt', 'updatedAt'])
+          && data.keys().hasOnly(['parentId', 'repoId', 'repoVisibility', 'repoOwnerId', 'authorId', 'authorUsername', 'body', 'createdAt', 'updatedAt'])
+          && data.parentId == parentId
+          && data.repoId == repoId
+          && data.repoVisibility in ['public', 'private']
+          && isValidId(data.repoOwnerId)
+          && isValidId(data.authorId)
+          && isValidUsername(data.authorUsername)
+          && isStr(data.body, 1, 10000)
+          && data.createdAt is timestamp
+          && data.updatedAt is timestamp;
+      }
+
+      match /issues/{issueId} {
+        allow get: if isValidId(repoId) && isValidId(issueId) && canReadRepo(repoId);
+        allow list: if isValidId(repoId) && (
+          resource.data.repoVisibility == 'public' ||
+          (isSignedIn() && (resource.data.repoOwnerId == request.auth.uid || resource.data.authorId == request.auth.uid)) ||
+          isAdmin()
+        );
+        allow create: if isVerifiedUser() && isValidId(repoId) && isValidId(issueId)
+          && isValidIssue(incoming(), repoId)
+          && canReadRepo(repoId)
+          && incoming().authorId == request.auth.uid
+          && incoming().status == 'open'
+          && incoming().commentsCount == 0
+          && incoming().repoVisibility == getRepo(repoId).visibility
+          && incoming().repoOwnerId == getRepo(repoId).ownerId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser() && isValidId(repoId) && isValidId(issueId)
+          && isValidIssue(incoming(), repoId)
+          && incoming().repoId == existing().repoId
+          && incoming().authorId == existing().authorId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            isAdmin() ||
+            (
+              (existing().authorId == request.auth.uid || isRepoOwnerOrMaintainer(repoId)) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['title', 'body', 'status', 'labels', 'assigneeIds', 'milestone', 'dueDate', 'updatedAt'])
+            ) ||
+            (
+              canReadRepo(repoId) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['commentsCount', 'updatedAt']) &&
+              incoming().commentsCount == existing().commentsCount + 1
+            )
+          );
+        allow delete: if isValidId(repoId) && isValidId(issueId) && (isRepoOwnerOrMaintainer(repoId) || isAdmin());
+
+        match /comments/{commentId} {
+          allow get: if isValidId(repoId) && isValidId(issueId) && isValidId(commentId) && canReadRepo(repoId);
+          allow list: if isValidId(repoId) && isValidId(issueId) && (
+            resource.data.repoVisibility == 'public' ||
+            (isSignedIn() && (resource.data.repoOwnerId == request.auth.uid || resource.data.authorId == request.auth.uid)) ||
+            isAdmin()
+          );
+          allow create: if isVerifiedUser() && isValidId(repoId) && isValidId(issueId) && isValidId(commentId)
+            && isValidComment(incoming(), repoId, issueId)
+            && canReadRepo(repoId)
+            && incoming().authorId == request.auth.uid
+            && incoming().repoVisibility == getRepo(repoId).visibility
+            && incoming().repoOwnerId == getRepo(repoId).ownerId
+            && incoming().createdAt == request.time
+            && incoming().updatedAt == request.time;
+          allow update: if isVerifiedUser() && isValidId(repoId) && isValidId(issueId) && isValidId(commentId)
+            && isValidComment(incoming(), repoId, issueId)
+            && existing().authorId == request.auth.uid
+            && incoming().createdAt == existing().createdAt
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly(['body', 'updatedAt']);
+          allow delete: if isValidId(repoId) && isValidId(issueId) && isValidId(commentId) && ((isVerifiedUser() && existing().authorId == request.auth.uid) || isRepoOwnerOrMaintainer(repoId) || isAdmin());
+        }
+      }
+
+      // ---------------------------------------------------------
+      // Pull Requests & Reviews
+      // ---------------------------------------------------------
+      function isValidPullRequest(data, repoId) {
+        return data.keys().hasAll([
+            'repoId', 'repoVisibility', 'repoOwnerId', 'number', 'title',
+            'sourceBranch', 'targetBranch', 'status', 'authorId', 'authorUsername',
+            'approvalsCount', 'createdAt', 'updatedAt'
+          ])
+          && data.keys().hasOnly([
+            'repoId', 'repoVisibility', 'repoOwnerId', 'number', 'title', 'body',
+            'sourceBranch', 'targetBranch', 'status', 'authorId', 'authorUsername',
+            'reviewerIds', 'approvalsCount', 'mergeMethod', 'mergedCommitSha',
+            'createdAt', 'updatedAt'
+          ])
+          && data.repoId == repoId
+          && data.repoVisibility in ['public', 'private']
+          && isValidId(data.repoOwnerId)
+          && data.number is number && data.number >= 1
+          && isStr(data.title, 1, 200)
+          && (!('body' in data) || isStr(data.body, 0, 20000))
+          && isStr(data.sourceBranch, 1, 100)
+          && isStr(data.targetBranch, 1, 100)
+          && data.status in ['open', 'draft', 'merged', 'closed']
+          && isValidId(data.authorId)
+          && isValidUsername(data.authorUsername)
+          && (!('reviewerIds' in data) || isBoundedStrList(data.reviewerIds, 5))
+          && data.approvalsCount is number && data.approvalsCount >= 0
+          && (!('mergeMethod' in data) || data.mergeMethod in ['merge', 'squash', 'rebase', 'none'])
+          && (!('mergedCommitSha' in data) || isStr(data.mergedCommitSha, 0, 64))
+          && data.createdAt is timestamp
+          && data.updatedAt is timestamp;
+      }
+
+      function isValidReview(data, repoId, prId) {
+        return data.keys().hasAll(['prId', 'repoId', 'repoVisibility', 'repoOwnerId', 'reviewerId', 'reviewerUsername', 'state', 'resolved', 'createdAt'])
+          && data.keys().hasOnly(['prId', 'repoId', 'repoVisibility', 'repoOwnerId', 'reviewerId', 'reviewerUsername', 'state', 'body', 'filePath', 'lineNumber', 'resolved', 'createdAt'])
+          && data.prId == prId
+          && data.repoId == repoId
+          && data.repoVisibility in ['public', 'private']
+          && isValidId(data.repoOwnerId)
+          && isValidId(data.reviewerId)
+          && isValidUsername(data.reviewerUsername)
+          && data.state in ['approved', 'changes_requested', 'commented']
+          && (!('body' in data) || isStr(data.body, 0, 5000))
+          && (!('filePath' in data) || isStr(data.filePath, 0, 300))
+          && (!('lineNumber' in data) || (data.lineNumber is number && data.lineNumber >= 1))
+          && data.resolved is bool
+          && data.createdAt is timestamp;
+      }
+
+      match /pull_requests/{prId} {
+        allow get: if isValidId(repoId) && isValidId(prId) && canReadRepo(repoId);
+        allow list: if isValidId(repoId) && (
+          resource.data.repoVisibility == 'public' ||
+          (isSignedIn() && (resource.data.repoOwnerId == request.auth.uid || resource.data.authorId == request.auth.uid)) ||
+          isAdmin()
+        );
+        allow create: if isVerifiedUser() && isValidId(repoId) && isValidId(prId)
+          && isValidPullRequest(incoming(), repoId)
+          && canWriteRepo(repoId)
+          && incoming().authorId == request.auth.uid
+          && incoming().status in ['open', 'draft']
+          && incoming().approvalsCount == 0
+          && incoming().repoVisibility == getRepo(repoId).visibility
+          && incoming().repoOwnerId == getRepo(repoId).ownerId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser() && isValidId(repoId) && isValidId(prId)
+          && isValidPullRequest(incoming(), repoId)
+          && incoming().repoId == existing().repoId
+          && incoming().authorId == existing().authorId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (existing().status != 'merged' || isAdmin())
+          && (
+            isAdmin() ||
+            (
+              (existing().authorId == request.auth.uid || isRepoOwnerOrMaintainer(repoId)) &&
+              incoming().status in ['open', 'draft', 'closed'] &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['title', 'body', 'status', 'reviewerIds', 'updatedAt'])
+            ) ||
+            (
+              isRepoOwnerOrMaintainer(repoId) &&
+              incoming().status == 'merged' &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'mergeMethod', 'mergedCommitSha', 'updatedAt'])
+            ) ||
+            (
+              canReadRepo(repoId) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['approvalsCount', 'updatedAt']) &&
+              incoming().approvalsCount == existing().approvalsCount + 1
+            )
+          );
+        allow delete: if isValidId(repoId) && isValidId(prId) && (isRepoOwnerOrMaintainer(repoId) || isAdmin());
+
+        match /reviews/{reviewId} {
+          allow get: if isValidId(repoId) && isValidId(prId) && isValidId(reviewId) && canReadRepo(repoId);
+          allow list: if isValidId(repoId) && isValidId(prId) && (
+            resource.data.repoVisibility == 'public' ||
+            (isSignedIn() && (resource.data.repoOwnerId == request.auth.uid || resource.data.reviewerId == request.auth.uid)) ||
+            isAdmin()
+          );
+          allow create: if isVerifiedUser() && isValidId(repoId) && isValidId(prId) && isValidId(reviewId)
+            && isValidReview(incoming(), repoId, prId)
+            && canReadRepo(repoId)
+            && incoming().reviewerId == request.auth.uid
+            && incoming().resolved == false
+            && incoming().repoVisibility == getRepo(repoId).visibility
+            && incoming().repoOwnerId == getRepo(repoId).ownerId
+            && incoming().createdAt == request.time;
+          allow update: if isVerifiedUser() && isValidId(repoId) && isValidId(prId) && isValidId(reviewId)
+            && isValidReview(incoming(), repoId, prId)
+            && (existing().reviewerId == request.auth.uid || isRepoOwnerOrMaintainer(repoId) || isAdmin())
+            && incoming().createdAt == existing().createdAt
+            && incoming().diff(existing()).affectedKeys().hasOnly(['resolved']);
+          allow delete: if isValidId(repoId) && isValidId(prId) && isValidId(reviewId) && (isRepoOwnerOrMaintainer(repoId) || isAdmin());
+        }
+      }
+
+      // ---------------------------------------------------------
+      // Project Kanban Tasks
+      // ---------------------------------------------------------
+      function isValidProjectTask(data, repoId) {
+        return data.keys().hasAll(['repoId', 'repoVisibility', 'repoOwnerId', 'title', 'column', 'priority', 'authorId', 'createdAt', 'updatedAt'])
+          && data.keys().hasOnly(['repoId', 'repoVisibility', 'repoOwnerId', 'title', 'description', 'column', 'priority', 'authorId', 'assigneeUsername', 'createdAt', 'updatedAt'])
+          && data.repoId == repoId
+          && data.repoVisibility in ['public', 'private']
+          && isValidId(data.repoOwnerId)
+          && isStr(data.title, 1, 160)
+          && (!('description' in data) || isStr(data.description, 0, 2000))
+          && data.column in ['todo', 'in_progress', 'review', 'done']
+          && data.priority in ['low', 'medium', 'high']
+          && isValidId(data.authorId)
+          && (!('assigneeUsername' in data) || isStr(data.assigneeUsername, 0, 32))
+          && data.createdAt is timestamp
+          && data.updatedAt is timestamp;
+      }
+
+      match /projects/{projectId} {
+        allow get: if isValidId(repoId) && isValidId(projectId) && canReadRepo(repoId);
+        allow list: if isValidId(repoId) && (
+          resource.data.repoVisibility == 'public' ||
+          (isSignedIn() && (resource.data.repoOwnerId == request.auth.uid || resource.data.authorId == request.auth.uid)) ||
+          isAdmin()
+        );
+        allow create: if isVerifiedUser() && isValidId(repoId) && isValidId(projectId)
+          && isValidProjectTask(incoming(), repoId)
+          && canWriteRepo(repoId)
+          && incoming().authorId == request.auth.uid
+          && incoming().repoVisibility == getRepo(repoId).visibility
+          && incoming().repoOwnerId == getRepo(repoId).ownerId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser() && isValidId(repoId) && isValidId(projectId)
+          && isValidProjectTask(incoming(), repoId)
+          && canWriteRepo(repoId)
+          && incoming().repoId == existing().repoId
+          && incoming().authorId == existing().authorId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'column', 'priority', 'assigneeUsername', 'updatedAt']);
+        allow delete: if isValidId(repoId) && isValidId(projectId) && canWriteRepo(repoId);
+      }
+
+      // ---------------------------------------------------------
+      // Discussions & Comments
+      // ---------------------------------------------------------
+      function isValidDiscussion(data, repoId) {
+        return data.keys().hasAll(['repoId', 'repoVisibility', 'repoOwnerId', 'title', 'body', 'category', 'authorId', 'authorUsername', 'isAnswered', 'upvotesCount', 'commentsCount', 'createdAt', 'updatedAt'])
+          && data.keys().hasOnly(['repoId', 'repoVisibility', 'repoOwnerId', 'title', 'body', 'category', 'authorId', 'authorUsername', 'isAnswered', 'upvotesCount', 'commentsCount', 'createdAt', 'updatedAt'])
+          && data.repoId == repoId
+          && data.repoVisibility in ['public', 'private']
+          && isValidId(data.repoOwnerId)
+          && isStr(data.title, 1, 200)
+          && isStr(data.body, 1, 20000)
+          && data.category in ['general', 'q_and_a', 'ideas', 'announcements']
+          && isValidId(data.authorId)
+          && isValidUsername(data.authorUsername)
+          && data.isAnswered is bool
+          && data.upvotesCount is number && data.upvotesCount >= 0
+          && data.commentsCount is number && data.commentsCount >= 0
+          && data.createdAt is timestamp
+          && data.updatedAt is timestamp;
+      }
+
+      match /discussions/{discussionId} {
+        allow get: if isValidId(repoId) && isValidId(discussionId) && canReadRepo(repoId);
+        allow list: if isValidId(repoId) && (
+          resource.data.repoVisibility == 'public' ||
+          (isSignedIn() && (resource.data.repoOwnerId == request.auth.uid || resource.data.authorId == request.auth.uid)) ||
+          isAdmin()
+        );
+        allow create: if isVerifiedUser() && isValidId(repoId) && isValidId(discussionId)
+          && isValidDiscussion(incoming(), repoId)
+          && canReadRepo(repoId)
+          && incoming().authorId == request.auth.uid
+          && incoming().isAnswered == false
+          && incoming().upvotesCount == 0
+          && incoming().commentsCount == 0
+          && incoming().repoVisibility == getRepo(repoId).visibility
+          && incoming().repoOwnerId == getRepo(repoId).ownerId
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isVerifiedUser() && isValidId(repoId) && isValidId(discussionId)
+          && isValidDiscussion(incoming(), repoId)
+          && incoming().repoId == existing().repoId
+          && incoming().authorId == existing().authorId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            isAdmin() ||
+            (
+              (existing().authorId == request.auth.uid || isRepoOwnerOrMaintainer(repoId)) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['title', 'body', 'category', 'isAnswered', 'updatedAt'])
+            ) ||
+            (
+              canReadRepo(repoId) &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['upvotesCount', 'commentsCount', 'updatedAt'])
+            )
+          );
+        allow delete: if isValidId(repoId) && isValidId(discussionId) && ((isVerifiedUser() && existing().authorId == request.auth.uid) || isRepoOwnerOrMaintainer(repoId) || isAdmin());
+
+        match /comments/{commentId} {
+          allow get: if isValidId(repoId) && isValidId(discussionId) && isValidId(commentId) && canReadRepo(repoId);
+          allow list: if isValidId(repoId) && isValidId(discussionId) && (
+            resource.data.repoVisibility == 'public' ||
+            (isSignedIn() && (resource.data.repoOwnerId == request.auth.uid || resource.data.authorId == request.auth.uid)) ||
+            isAdmin()
+          );
+          allow create: if isVerifiedUser() && isValidId(repoId) && isValidId(discussionId) && isValidId(commentId)
+            && isValidComment(incoming(), repoId, discussionId)
+            && canReadRepo(repoId)
+            && incoming().authorId == request.auth.uid
+            && incoming().repoVisibility == getRepo(repoId).visibility
+            && incoming().repoOwnerId == getRepo(repoId).ownerId
+            && incoming().createdAt == request.time
+            && incoming().updatedAt == request.time;
+          allow update: if false;
+          allow delete: if isValidId(repoId) && isValidId(discussionId) && isValidId(commentId) && ((isVerifiedUser() && existing().authorId == request.auth.uid) || isRepoOwnerOrMaintainer(repoId) || isAdmin());
+        }
+      }
+
+      // ---------------------------------------------------------
+      // Releases, Deployments, Workflows
+      // ---------------------------------------------------------
+      function isValidRelease(data, repoId) {
+        return data.keys().hasAll(['repoId', 'repoVisibility', 'repoOwnerId', 'tagName', 'title', 'isDraft', 'isPrerelease', 'authorId', 'authorUsername', 'downloadsCount', 'createdAt'])
+          && data.keys().hasOnly(['repoId', 'repoVisibility', 'repoOwnerId', 'tagName', 'title', 'body', 'isDraft', 'isPrerelease', 'authorId', 'authorUsername', 'downloadsCount', 'createdAt'])
+          && data.repoId == repoId
+          && data.repoVisibility in ['public', 'private']
+          && isValidId(data.repoOwnerId)
+          && isStr(data.tagName, 1, 64)
+          && isStr(data.title, 1, 160)
+          && (!('body' in data) || isStr(data.body, 0, 20000))
+          && data.isDraft is bool
+          && data.isPrerelease is bool
+          && isValidId(data.authorId)
+          && isValidUsername(data.authorUsername)
+          && data.downloadsCount is number && data.downloadsCount >= 0
+          && data.createdAt is timestamp;
+      }
+
+      match /releases/{releaseId} {
+        allow get: if isValidId(repoId) && isValidId(releaseId) && canReadRepo(repoId);
+        allow list: if isValidId(repoId) && (
+          resource.data.repoVisibility == 'public' ||
+          (isSignedIn() && (resource.data.repoOwnerId == request.auth.uid || resource.data.authorId == request.auth.uid)) ||
+          isAdmin()
+        );
+        allow create: if isVerifiedUser() && isValidId(repoId) && isValidId(releaseId)
+          && isValidRelease(incoming(), repoId)
+          && isRepoOwnerOrMaintainer(repoId)
+          && incoming().authorId == request.auth.uid
+          && incoming().downloadsCount == 0
+          && incoming().repoVisibility == getRepo(repoId).visibility
+          && incoming().repoOwnerId == getRepo(repoId).ownerId
+          && incoming().createdAt == request.time;
+        allow update: if isVerifiedUser() && isValidId(repoId) && isValidId(releaseId)
+          && isValidRelease(incoming(), repoId)
+          && canReadRepo(repoId)
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly(['downloadsCount'])
+          && incoming().downloadsCount == existing().downloadsCount + 1;
+        allow delete: if isValidId(repoId) && isValidId(releaseId) && isRepoOwnerOrMaintainer(repoId);
+      }
+
+      function isValidDeployment(data, repoId) {
+        return data.keys().hasAll(['repoId', 'repoVisibility', 'repoOwnerId', 'branch', 'outputDir', 'commitSha', 'status', 'url', 'authorId', 'createdAt'])
+          && data.keys().hasOnly(['repoId', 'repoVisibility', 'repoOwnerId', 'branch', 'outputDir', 'commitSha', 'status', 'url', 'buildLogs', 'authorId', 'createdAt'])
+          && data.repoId == repoId
+          && data.repoVisibility in ['public', 'private']
+          && isValidId(data.repoOwnerId)
+          && isStr(data.branch, 1, 64)
+          && isStr(data.outputDir, 1, 120)
+          && isStr(data.commitSha, 6, 64)
+          && data.status in ['live', 'failed', 'rolled_back']
+          && isStr(data.url, 1, 300)
+          && (!('buildLogs' in data) || isStr(data.buildLogs, 0, 8000))
+          && isValidId(data.authorId)
+          && data.createdAt is timestamp;
+      }
+
+      match /deployments/{deploymentId} {
+        allow get: if isValidId(repoId) && isValidId(deploymentId) && canReadRepo(repoId);
+        allow list: if isValidId(repoId) && (
+          resource.data.repoVisibility == 'public' ||
+          (isSignedIn() && (resource.data.repoOwnerId == request.auth.uid || resource.data.authorId == request.auth.uid)) ||
+          isAdmin()
+        );
+        allow create: if isVerifiedUser() && isValidId(repoId) && isValidId(deploymentId)
+          && isValidDeployment(incoming(), repoId)
+          && canWriteRepo(repoId)
+          && incoming().authorId == request.auth.uid
+          && incoming().repoVisibility == getRepo(repoId).visibility
+          && incoming().repoOwnerId == getRepo(repoId).ownerId
+          && incoming().createdAt == request.time;
+        allow update: if isVerifiedUser() && isValidId(repoId) && isValidId(deploymentId)
+          && isValidDeployment(incoming(), repoId)
+          && isRepoOwnerOrMaintainer(repoId)
+          && incoming().createdAt == existing().createdAt
+          && incoming().status in ['live', 'rolled_back']
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status']);
+        allow delete: if isValidId(repoId) && isValidId(deploymentId) && isRepoOwnerOrMaintainer(repoId);
+      }
+
+      function isValidWorkflowRun(data, repoId) {
+        return data.keys().hasAll(['repoId', 'repoVisibility', 'repoOwnerId', 'workflowName', 'trigger', 'branch', 'status', 'authorId', 'createdAt'])
+          && data.keys().hasOnly(['repoId', 'repoVisibility', 'repoOwnerId', 'workflowName', 'trigger', 'branch', 'status', 'summary', 'authorId', 'createdAt'])
+          && data.repoId == repoId
+          && data.repoVisibility in ['public', 'private']
+          && isValidId(data.repoOwnerId)
+          && isStr(data.workflowName, 1, 100)
+          && data.trigger in ['push', 'pull_request', 'manual', 'schedule']
+          && isStr(data.branch, 1, 64)
+          && data.status in ['configured', 'queued_external_runner', 'cancelled']
+          && (!('summary' in data) || isStr(data.summary, 0, 1000))
+          && isValidId(data.authorId)
+          && data.createdAt is timestamp;
+      }
+
+      match /workflow_runs/{runId} {
+        allow get: if isValidId(repoId) && isValidId(runId) && canReadRepo(repoId);
+        allow list: if isValidId(repoId) && (
+          resource.data.repoVisibility == 'public' ||
+          (isSignedIn() && (resource.data.repoOwnerId == request.auth.uid || resource.data.authorId == request.auth.uid)) ||
+          isAdmin()
+        );
+        allow create: if isVerifiedUser() && isValidId(repoId) && isValidId(runId)
+          && isValidWorkflowRun(incoming(), repoId)
+          && canWriteRepo(repoId)
+          && incoming().authorId == request.auth.uid
+          && incoming().repoVisibility == getRepo(repoId).visibility
+          && incoming().repoOwnerId == getRepo(repoId).ownerId
+          && incoming().createdAt == request.time;
+        allow update: if isVerifiedUser() && isValidId(repoId) && isValidId(runId)
+          && isValidWorkflowRun(incoming(), repoId)
+          && canWriteRepo(repoId)
+          && incoming().createdAt == existing().createdAt
+          && existing().status != 'cancelled'
+          && incoming().status == 'cancelled'
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status']);
+        allow delete: if isValidId(repoId) && isValidId(runId) && isRepoOwnerOrMaintainer(repoId);
+      }
+    }
+
+    // ---------------------------------------------------------
+    // Packages Registry
+    // ---------------------------------------------------------
+    function isValidPackage(data) {
+      return data.keys().hasAll(['name', 'version', 'repoId', 'ownerId', 'ownerUsername', 'visibility', 'downloadsCount', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['name', 'version', 'repoId', 'ownerId', 'ownerUsername', 'description', 'visibility', 'downloadsCount', 'createdAt', 'updatedAt'])
+        && isStr(data.name, 1, 100)
+        && isStr(data.version, 1, 40)
+        && isValidId(data.repoId)
+        && isValidId(data.ownerId)
+        && isValidUsername(data.ownerUsername)
+        && (!('description' in data) || isStr(data.description, 0, 400))
+        && data.visibility in ['public', 'private']
+        && data.downloadsCount is number && data.downloadsCount >= 0
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /packages/{packageId} {
+      allow get: if isValidId(packageId) && (existing().visibility == 'public' || (isSignedIn() && existing().ownerId == request.auth.uid) || isAdmin());
+      allow list: if resource.data.visibility == 'public' || (isSignedIn() && resource.data.ownerId == request.auth.uid) || isAdmin();
+      allow create: if isVerifiedUser() && isValidId(packageId)
+        && isValidPackage(incoming())
+        && repoExists(incoming().repoId)
+        && incoming().ownerId == request.auth.uid
+        && incoming().downloadsCount == 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(packageId)
+        && isValidPackage(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (existing().ownerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['version', 'description', 'visibility', 'updatedAt'])) ||
+          (existing().visibility == 'public' && incoming().diff(existing()).affectedKeys().hasOnly(['downloadsCount', 'updatedAt']) && incoming().downloadsCount == existing().downloadsCount + 1)
+        );
+      allow delete: if isValidId(packageId) && ((isVerifiedUser() && existing().ownerId == request.auth.uid) || isAdmin());
+    }
+
+    // ---------------------------------------------------------
+    // Organizations & Teams
+    // ---------------------------------------------------------
+    function isValidOrganization(data) {
+      return data.keys().hasAll(['slug', 'name', 'ownerId', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['slug', 'name', 'description', 'readme', 'avatarUrl', 'website', 'location', 'ownerId', 'createdAt', 'updatedAt'])
+        && isValidSlug(data.slug)
+        && isStr(data.name, 1, 80)
+        && (!('description' in data) || isStr(data.description, 0, 400))
+        && (!('readme' in data) || isStr(data.readme, 0, 10000))
+        && (!('avatarUrl' in data) || isStr(data.avatarUrl, 0, 500))
+        && (!('website' in data) || isStr(data.website, 0, 200))
+        && (!('location' in data) || isStr(data.location, 0, 100))
+        && isValidId(data.ownerId)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /organizations/{orgId} {
+      allow get: if isValidId(orgId);
+      allow list: if resource.data.slug != null;
+      allow create: if isVerifiedUser() && isValidId(orgId)
+        && isValidOrganization(incoming())
+        && incoming().ownerId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(orgId)
+        && isValidOrganization(incoming())
+        && isOrgAdminOrOwner(orgId)
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (incoming().ownerId == existing().ownerId && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'readme', 'avatarUrl', 'website', 'location', 'updatedAt'])) ||
+          (existing().ownerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['ownerId', 'updatedAt']))
+        );
+      allow delete: if isValidId(orgId) && ((isVerifiedUser() && existing().ownerId == request.auth.uid) || isAdmin());
+
+      function isValidOrgMember(data, orgId, uid) {
+        return data.keys().hasAll(['orgId', 'uid', 'username', 'role', 'createdAt'])
+          && data.keys().hasOnly(['orgId', 'uid', 'username', 'role', 'createdAt'])
+          && data.orgId == orgId
+          && data.uid == uid
+          && isValidUsername(data.username)
+          && data.role in ['owner', 'admin', 'maintainer', 'developer', 'member', 'read']
+          && data.createdAt is timestamp;
+      }
+
+      match /members/{uid} {
+        allow get: if isValidId(orgId) && isValidId(uid);
+        allow list: if isValidId(orgId) && resource.data.orgId == orgId;
+        allow create: if isVerifiedUser() && isValidId(orgId) && isValidId(uid)
+          && isValidOrgMember(incoming(), orgId, uid)
+          && (isOrgAdminOrOwner(orgId) || (request.auth.uid == uid && getOrg(orgId).ownerId == uid))
+          && incoming().createdAt == request.time;
+        allow update: if isVerifiedUser() && isValidId(orgId) && isValidId(uid)
+          && isValidOrgMember(incoming(), orgId, uid)
+          && isOrgAdminOrOwner(orgId)
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly(['role']);
+        allow delete: if isValidId(orgId) && isValidId(uid) && (isOrgAdminOrOwner(orgId) || (isVerifiedUser() && request.auth.uid == uid));
+      }
+
+      function isValidTeam(data, orgId) {
+        return data.keys().hasAll(['orgId', 'name', 'permission', 'createdAt'])
+          && data.keys().hasOnly(['orgId', 'name', 'description', 'permission', 'createdAt'])
+          && data.orgId == orgId
+          && isStr(data.name, 1, 80)
+          && (!('description' in data) || isStr(data.description, 0, 300))
+          && data.permission in ['read', 'write', 'admin']
+          && data.createdAt is timestamp;
+      }
+
+      match /teams/{teamId} {
+        allow get: if isValidId(orgId) && isValidId(teamId);
+        allow list: if isValidId(orgId) && resource.data.orgId == orgId;
+        allow create: if isVerifiedUser() && isValidId(orgId) && isValidId(teamId)
+          && isValidTeam(incoming(), orgId)
+          && isOrgAdminOrOwner(orgId)
+          && incoming().createdAt == request.time;
+        allow update: if isVerifiedUser() && isValidId(orgId) && isValidId(teamId)
+          && isValidTeam(incoming(), orgId)
+          && isOrgAdminOrOwner(orgId)
+          && incoming().createdAt == existing().createdAt
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'permission']);
+        allow delete: if isValidId(orgId) && isValidId(teamId) && isOrgAdminOrOwner(orgId);
+      }
+    }
+
+    // ---------------------------------------------------------
+    // Interaction Edges (Stars, Watchers, Bookmarks, Followers)
+    // ---------------------------------------------------------
+    function isValidEdge(data) {
+      return data.keys().hasAll(['actorId', 'targetId', 'createdAt'])
+        && data.keys().hasOnly(['actorId', 'targetId', 'createdAt'])
+        && isValidId(data.actorId)
+        && isValidId(data.targetId)
+        && data.actorId == request.auth.uid
+        && data.createdAt == request.time;
+    }
+
+    match /stars/{edgeId} {
+      allow get: if isValidId(edgeId);
+      allow list: if resource.data.actorId != null;
+      allow create: if isVerifiedUser() && isValidId(edgeId) && isValidEdge(incoming()) && repoExists(incoming().targetId);
+      allow update: if false;
+      allow delete: if isValidId(edgeId) && ((isVerifiedUser() && existing().actorId == request.auth.uid) || isAdmin());
+    }
+
+    match /watchers/{edgeId} {
+      allow get: if isValidId(edgeId);
+      allow list: if isSignedIn() && resource.data.actorId == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(edgeId) && isValidEdge(incoming()) && repoExists(incoming().targetId);
+      allow update: if false;
+      allow delete: if isValidId(edgeId) && ((isVerifiedUser() && existing().actorId == request.auth.uid) || isAdmin());
+    }
+
+    match /bookmarks/{edgeId} {
+      allow get: if isValidId(edgeId) && isSignedIn() && existing().actorId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.actorId == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(edgeId) && isValidEdge(incoming()) && repoExists(incoming().targetId);
+      allow update: if false;
+      allow delete: if isValidId(edgeId) && isVerifiedUser() && existing().actorId == request.auth.uid;
+    }
+
+    match /followers/{edgeId} {
+      allow get: if isValidId(edgeId);
+      allow list: if resource.data.actorId != null;
+      allow create: if isVerifiedUser() && isValidId(edgeId) && isValidEdge(incoming()) && incoming().targetId != request.auth.uid;
+      allow update: if false;
+      allow delete: if isValidId(edgeId) && ((isVerifiedUser() && existing().actorId == request.auth.uid) || isAdmin());
+    }
+
+    // ---------------------------------------------------------
+    // Notifications & Activity Feed
+    // ---------------------------------------------------------
+    function isValidNotification(data) {
+      return data.keys().hasAll(['userId', 'type', 'title', 'isRead', 'actorId', 'createdAt'])
+        && data.keys().hasOnly(['userId', 'type', 'title', 'message', 'link', 'isRead', 'actorId', 'createdAt'])
+        && isValidId(data.userId)
+        && data.type in ['follow', 'star', 'fork', 'mention', 'issue', 'pr_review', 'merge', 'release', 'org_invite', 'security']
+        && isStr(data.title, 1, 160)
+        && (!('message' in data) || isStr(data.message, 0, 500))
+        && (!('link' in data) || isStr(data.link, 0, 200))
+        && data.isRead is bool
+        && isValidId(data.actorId)
+        && data.createdAt is timestamp;
+    }
+
+    match /notifications/{notificationId} {
+      allow get: if isValidId(notificationId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(notificationId)
+        && isValidNotification(incoming())
+        && incoming().isRead == false
+        && incoming().actorId == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(notificationId)
+        && isValidNotification(incoming())
+        && existing().userId == request.auth.uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['isRead']);
+      allow delete: if isValidId(notificationId) && isVerifiedUser() && existing().userId == request.auth.uid;
+    }
+
+    match /activity_events/{eventId} {
+      allow get: if isValidId(eventId) && (existing().visibility == 'public' || (isSignedIn() && existing().actorId == request.auth.uid) || isAdmin());
+      allow list: if resource.data.visibility == 'public' || (isSignedIn() && resource.data.actorId == request.auth.uid) || isAdmin();
+      allow create: if isVerifiedUser() && isValidId(eventId)
+        && incoming().keys().hasAll(['actorId', 'actorUsername', 'type', 'summary', 'visibility', 'createdAt'])
+        && incoming().keys().hasOnly(['actorId', 'actorUsername', 'type', 'repoId', 'repoFullName', 'summary', 'visibility', 'createdAt'])
+        && incoming().actorId == request.auth.uid
+        && isValidUsername(incoming().actorUsername)
+        && incoming().type in ['repo_created', 'commit_pushed', 'issue_opened', 'pr_merged', 'release_published', 'repo_starred', 'repo_deployed']
+        && (!('repoId' in incoming()) || isStr(incoming().repoId, 0, 128))
+        && (!('repoFullName' in incoming()) || isStr(incoming().repoFullName, 0, 120))
+        && isStr(incoming().summary, 1, 300)
+        && incoming().visibility in ['public', 'private']
+        && incoming().createdAt == request.time;
+      allow update, delete: if isAdmin();
+    }
+
+    // ---------------------------------------------------------
+    // Moderation Reports, Platform Config & Audit Logs
+    // ---------------------------------------------------------
+    function isValidReport(data) {
+      return data.keys().hasAll(['reporterId', 'targetType', 'targetId', 'reason', 'status', 'createdAt'])
+        && data.keys().hasOnly(['reporterId', 'targetType', 'targetId', 'reason', 'status', 'createdAt'])
+        && isValidId(data.reporterId)
+        && data.targetType in ['repository', 'user', 'issue', 'discussion', 'security_advisory']
+        && isValidId(data.targetId)
+        && isStr(data.reason, 3, 1000)
+        && data.status in ['open', 'resolved', 'dismissed']
+        && data.createdAt is timestamp;
+    }
+
+    match /reports/{reportId} {
+      allow get: if isValidId(reportId) && (isAdmin() || (isSignedIn() && existing().reporterId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.reporterId == request.auth.uid);
+      allow create: if isVerifiedUser() && isValidId(reportId)
+        && isValidReport(incoming())
+        && incoming().reporterId == request.auth.uid
+        && incoming().status == 'open'
+        && incoming().createdAt == request.time;
+      allow update: if isAdmin() && isValidId(reportId)
+        && isValidReport(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status']);
+      allow delete: if isAdmin() && isValidId(reportId);
+    }
+
+    function isValidPlatformConfig(data) {
+      return data.keys().hasAll(['maintenanceMode', 'maxRepoSizeMb', 'maxUserStorageMb', 'updatedAt'])
+        && data.keys().hasOnly(['maintenanceMode', 'announcementBanner', 'maxRepoSizeMb', 'maxUserStorageMb', 'updatedAt'])
+        && data.maintenanceMode is bool
+        && (!('announcementBanner' in data) || isStr(data.announcementBanner, 0, 300))
+        && data.maxRepoSizeMb is number && data.maxRepoSizeMb >= 1
+        && data.maxUserStorageMb is number && data.maxUserStorageMb >= 1
+        && data.updatedAt is timestamp;
+    }
+
+    match /platform_config/{configId} {
+      allow get: if isValidId(configId);
+      allow list: if resource.data.maxRepoSizeMb != null;
+      allow create, update: if isAdmin() && isValidId(configId)
+        && isValidPlatformConfig(incoming())
+        && incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    match /audit_logs/{logId} {
+      allow get: if isValidId(logId) && (isAdmin() || (isSignedIn() && existing().actorId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.actorId == request.auth.uid);
+      allow create: if isVerifiedUser() && isValidId(logId)
+        && incoming().keys().hasAll(['actorId', 'action', 'targetType', 'targetId', 'createdAt'])
+        && incoming().keys().hasOnly(['actorId', 'action', 'targetType', 'targetId', 'details', 'createdAt'])
+        && incoming().actorId == request.auth.uid
+        && isStr(incoming().action, 1, 100)
+        && isStr(incoming().targetType, 1, 60)
+        && isStr(incoming().targetId, 1, 128)
+        && (!('details' in incoming()) || isStr(incoming().details, 0, 500))
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+  }
+}

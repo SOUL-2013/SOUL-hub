@@ -1,0 +1,6 @@
+{
+  "name": "SOUL HUB",
+  "description": "Where Developers Build the Future — Git hosting, code collaboration, issue tracking, and website deployment by Soumadip Orbit Universal Labs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

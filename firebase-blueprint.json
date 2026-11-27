@@ -1,0 +1,551 @@
+{
+  "entities": {
+    "PublicProfile": {
+      "title": "PublicProfile",
+      "description": "Public developer profile visible across SOUL HUB without exposing private PII.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "username": { "type": "string", "minLength": 3, "maxLength": 32, "pattern": "^[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "bio": { "type": "string", "maxLength": 500 },
+        "avatarUrl": { "type": "string", "maxLength": 500 },
+        "coverUrl": { "type": "string", "maxLength": 500 },
+        "website": { "type": "string", "maxLength": 200 },
+        "company": { "type": "string", "maxLength": 100 },
+        "location": { "type": "string", "maxLength": 100 },
+        "statusText": { "type": "string", "maxLength": 120 },
+        "socialLinks": { "type": "array", "maxLength": 6 },
+        "pinnedRepoIds": { "type": "array", "maxLength": 6 },
+        "profileReadme": { "type": "string", "maxLength": 10000 },
+        "isPrivateProfile": { "type": "boolean" },
+        "followersCount": { "type": "number" },
+        "followingCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "username", "displayName", "isPrivateProfile", "followersCount", "followingCount", "createdAt", "updatedAt"]
+    },
+    "PrivateUser": {
+      "title": "PrivateUser",
+      "description": "Private PII, account preferences, security settings, and storage quota.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 200 },
+        "blockedUserIds": { "type": "array", "maxLength": 100 },
+        "mutedUserIds": { "type": "array", "maxLength": 100 },
+        "emailNotifications": { "type": "boolean" },
+        "securityAlerts": { "type": "boolean" },
+        "themePreference": { "type": "string", "enum": ["dark", "light"] },
+        "storageUsedBytes": { "type": "number" },
+        "quotaLimitBytes": { "type": "number" },
+        "isSuspended": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "storageUsedBytes", "quotaLimitBytes", "createdAt", "updatedAt"]
+    },
+    "UsernameReservation": {
+      "title": "UsernameReservation",
+      "description": "Unique username reservation mapping username to uid.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "username": { "type": "string", "minLength": 3, "maxLength": 32, "pattern": "^[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]$" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "username", "createdAt"]
+    },
+    "Repository": {
+      "title": "Repository",
+      "description": "Source code repository metadata linked to a real server-side bare Git repository.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerUsername": { "type": "string", "minLength": 3, "maxLength": 32, "pattern": "^[a-z0-9][a-z0-9\\-]{1,30}[a-z0-9]$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "slug": { "type": "string", "minLength": 1, "maxLength": 80, "pattern": "^[a-z0-9][a-z0-9._\\-]{0,78}[a-z0-9]$" },
+        "fullName": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "description": { "type": "string", "maxLength": 500 },
+        "visibility": { "type": "string", "enum": ["public", "private"] },
+        "defaultBranch": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "topics": { "type": "array", "maxLength": 10 },
+        "website": { "type": "string", "maxLength": 200 },
+        "license": { "type": "string", "maxLength": 40 },
+        "primaryLanguage": { "type": "string", "maxLength": 40 },
+        "isArchived": { "type": "boolean" },
+        "isTemplate": { "type": "boolean" },
+        "starsCount": { "type": "number" },
+        "forksCount": { "type": "number" },
+        "watchersCount": { "type": "number" },
+        "openIssuesCount": { "type": "number" },
+        "sizeBytes": { "type": "number" },
+        "forkedFrom": { "type": "string", "maxLength": 128 },
+        "orgId": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerId", "ownerUsername", "name", "slug", "fullName", "visibility", "defaultBranch", "isArchived", "starsCount", "forksCount", "watchersCount", "openIssuesCount", "createdAt", "updatedAt"]
+    },
+    "RepositoryMember": {
+      "title": "RepositoryMember",
+      "description": "Collaborator role assignment inside a repository.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "username": { "type": "string", "minLength": 3, "maxLength": 32 },
+        "role": { "type": "string", "enum": ["owner", "maintainer", "developer", "read"] },
+        "addedBy": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "repoVisibility": { "type": "string", "enum": ["public", "private"] },
+        "repoOwnerId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "username", "role", "addedBy", "repoVisibility", "repoOwnerId", "createdAt"]
+    },
+    "Issue": {
+      "title": "Issue",
+      "description": "Repository issue and task tracking item.",
+      "type": "object",
+      "properties": {
+        "repoId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "number": { "type": "number" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "body": { "type": "string", "maxLength": 20000 },
+        "status": { "type": "string", "enum": ["open", "closed"] },
+        "authorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "authorUsername": { "type": "string", "minLength": 3, "maxLength": 32 },
+        "labels": { "type": "array", "maxLength": 10 },
+        "assigneeIds": { "type": "array", "maxLength": 5 },
+        "milestone": { "type": "string", "maxLength": 80 },
+        "dueDate": { "type": "string", "maxLength": 40 },
+        "commentsCount": { "type": "number" },
+        "repoVisibility": { "type": "string", "enum": ["public", "private"] },
+        "repoOwnerId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["repoId", "number", "title", "status", "authorId", "authorUsername", "commentsCount", "repoVisibility", "repoOwnerId", "createdAt", "updatedAt"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "Comment on an issue, pull request, or discussion.",
+      "type": "object",
+      "properties": {
+        "parentId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "repoId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "authorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "authorUsername": { "type": "string", "minLength": 3, "maxLength": 32 },
+        "body": { "type": "string", "minLength": 1, "maxLength": 10000 },
+        "repoVisibility": { "type": "string", "enum": ["public", "private"] },
+        "repoOwnerId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["parentId", "repoId", "authorId", "authorUsername", "body", "repoVisibility", "repoOwnerId", "createdAt", "updatedAt"]
+    },
+    "PullRequest": {
+      "title": "PullRequest",
+      "description": "Pull request comparing source and target Git branches.",
+      "type": "object",
+      "properties": {
+        "repoId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "number": { "type": "number" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "body": { "type": "string", "maxLength": 20000 },
+        "sourceBranch": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "targetBranch": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "status": { "type": "string", "enum": ["open", "draft", "merged", "closed"] },
+        "authorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "authorUsername": { "type": "string", "minLength": 3, "maxLength": 32 },
+        "reviewerIds": { "type": "array", "maxLength": 5 },
+        "approvalsCount": { "type": "number" },
+        "mergeMethod": { "type": "string", "enum": ["merge", "squash", "rebase", "none"] },
+        "mergedCommitSha": { "type": "string", "maxLength": 64 },
+        "repoVisibility": { "type": "string", "enum": ["public", "private"] },
+        "repoOwnerId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["repoId", "number", "title", "sourceBranch", "targetBranch", "status", "authorId", "authorUsername", "approvalsCount", "repoVisibility", "repoOwnerId", "createdAt", "updatedAt"]
+    },
+    "PullRequestReview": {
+      "title": "PullRequestReview",
+      "description": "Code review decision or inline review note.",
+      "type": "object",
+      "properties": {
+        "prId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "repoId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "reviewerId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "reviewerUsername": { "type": "string", "minLength": 3, "maxLength": 32 },
+        "state": { "type": "string", "enum": ["approved", "changes_requested", "commented"] },
+        "body": { "type": "string", "maxLength": 5000 },
+        "filePath": { "type": "string", "maxLength": 300 },
+        "lineNumber": { "type": "number" },
+        "resolved": { "type": "boolean" },
+        "repoVisibility": { "type": "string", "enum": ["public", "private"] },
+        "repoOwnerId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["prId", "repoId", "reviewerId", "reviewerUsername", "state", "resolved", "repoVisibility", "repoOwnerId", "createdAt"]
+    },
+    "ProjectTask": {
+      "title": "ProjectTask",
+      "description": "Kanban / Table project management task tied to a repository.",
+      "type": "object",
+      "properties": {
+        "repoId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "column": { "type": "string", "enum": ["todo", "in_progress", "review", "done"] },
+        "priority": { "type": "string", "enum": ["low", "medium", "high"] },
+        "authorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "assigneeUsername": { "type": "string", "maxLength": 32 },
+        "repoVisibility": { "type": "string", "enum": ["public", "private"] },
+        "repoOwnerId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["repoId", "title", "column", "priority", "authorId", "repoVisibility", "repoOwnerId", "createdAt", "updatedAt"]
+    },
+    "Discussion": {
+      "title": "Discussion",
+      "description": "Repository or community Q&A thread.",
+      "type": "object",
+      "properties": {
+        "repoId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "body": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "category": { "type": "string", "enum": ["general", "q_and_a", "ideas", "announcements"] },
+        "authorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "authorUsername": { "type": "string", "minLength": 3, "maxLength": 32 },
+        "isAnswered": { "type": "boolean" },
+        "upvotesCount": { "type": "number" },
+        "commentsCount": { "type": "number" },
+        "repoVisibility": { "type": "string", "enum": ["public", "private"] },
+        "repoOwnerId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["repoId", "title", "body", "category", "authorId", "authorUsername", "isAnswered", "upvotesCount", "commentsCount", "repoVisibility", "repoOwnerId", "createdAt", "updatedAt"]
+    },
+    "Release": {
+      "title": "Release",
+      "description": "Tagged release and downloadable build artifacts.",
+      "type": "object",
+      "properties": {
+        "repoId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "tagName": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "body": { "type": "string", "maxLength": 20000 },
+        "isDraft": { "type": "boolean" },
+        "isPrerelease": { "type": "boolean" },
+        "authorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "authorUsername": { "type": "string", "minLength": 3, "maxLength": 32 },
+        "downloadsCount": { "type": "number" },
+        "repoVisibility": { "type": "string", "enum": ["public", "private"] },
+        "repoOwnerId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["repoId", "tagName", "title", "isDraft", "isPrerelease", "authorId", "authorUsername", "downloadsCount", "repoVisibility", "repoOwnerId", "createdAt"]
+    },
+    "Package": {
+      "title": "Package",
+      "description": "Published package entry in the SOUL HUB registry.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "version": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "repoId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "ownerUsername": { "type": "string", "minLength": 3, "maxLength": 32 },
+        "description": { "type": "string", "maxLength": 400 },
+        "visibility": { "type": "string", "enum": ["public", "private"] },
+        "downloadsCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "version", "repoId", "ownerId", "ownerUsername", "visibility", "downloadsCount", "createdAt", "updatedAt"]
+    },
+    "Organization": {
+      "title": "Organization",
+      "description": "Developer organization workspace.",
+      "type": "object",
+      "properties": {
+        "slug": { "type": "string", "minLength": 2, "maxLength": 40, "pattern": "^[a-z0-9][a-z0-9\\-]{0,38}[a-z0-9]$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "description": { "type": "string", "maxLength": 400 },
+        "readme": { "type": "string", "maxLength": 10000 },
+        "avatarUrl": { "type": "string", "maxLength": 500 },
+        "website": { "type": "string", "maxLength": 200 },
+        "location": { "type": "string", "maxLength": 100 },
+        "ownerId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["slug", "name", "ownerId", "createdAt", "updatedAt"]
+    },
+    "OrganizationMember": {
+      "title": "OrganizationMember",
+      "description": "Member role within an organization.",
+      "type": "object",
+      "properties": {
+        "orgId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "username": { "type": "string", "minLength": 3, "maxLength": 32 },
+        "role": { "type": "string", "enum": ["owner", "admin", "maintainer", "developer", "member", "read"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orgId", "uid", "username", "role", "createdAt"]
+    },
+    "Team": {
+      "title": "Team",
+      "description": "Team inside an organization.",
+      "type": "object",
+      "properties": {
+        "orgId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "description": { "type": "string", "maxLength": 300 },
+        "permission": { "type": "string", "enum": ["read", "write", "admin"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orgId", "name", "permission", "createdAt"]
+    },
+    "Deployment": {
+      "title": "Deployment",
+      "description": "Static website deployment record.",
+      "type": "object",
+      "properties": {
+        "repoId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "branch": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "outputDir": { "type": "string", "maxLength": 120 },
+        "commitSha": { "type": "string", "minLength": 6, "maxLength": 64 },
+        "status": { "type": "string", "enum": ["live", "failed", "rolled_back"] },
+        "url": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "buildLogs": { "type": "string", "maxLength": 8000 },
+        "authorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "repoVisibility": { "type": "string", "enum": ["public", "private"] },
+        "repoOwnerId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["repoId", "branch", "outputDir", "commitSha", "status", "url", "authorId", "repoVisibility", "repoOwnerId", "createdAt"]
+    },
+    "WorkflowRun": {
+      "title": "WorkflowRun",
+      "description": "CI/CD workflow configuration and run record.",
+      "type": "object",
+      "properties": {
+        "repoId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "workflowName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "trigger": { "type": "string", "enum": ["push", "pull_request", "manual", "schedule"] },
+        "branch": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "status": { "type": "string", "enum": ["configured", "queued_external_runner", "cancelled"] },
+        "summary": { "type": "string", "maxLength": 1000 },
+        "authorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "repoVisibility": { "type": "string", "enum": ["public", "private"] },
+        "repoOwnerId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["repoId", "workflowName", "trigger", "branch", "status", "authorId", "repoVisibility", "repoOwnerId", "createdAt"]
+    },
+    "InteractionEdge": {
+      "title": "InteractionEdge",
+      "description": "Star, Watch, Bookmark, or Follow edge document.",
+      "type": "object",
+      "properties": {
+        "actorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "targetId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["actorId", "targetId", "createdAt"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "User notification item.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "type": { "type": "string", "enum": ["follow", "star", "fork", "mention", "issue", "pr_review", "merge", "release", "org_invite", "security"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "message": { "type": "string", "maxLength": 500 },
+        "link": { "type": "string", "maxLength": 200 },
+        "isRead": { "type": "boolean" },
+        "actorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "type", "title", "isRead", "actorId", "createdAt"]
+    },
+    "ActivityEvent": {
+      "title": "ActivityEvent",
+      "description": "Developer activity feed item.",
+      "type": "object",
+      "properties": {
+        "actorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actorUsername": { "type": "string", "minLength": 3, "maxLength": 32 },
+        "type": { "type": "string", "enum": ["repo_created", "commit_pushed", "issue_opened", "pr_merged", "release_published", "repo_starred", "repo_deployed"] },
+        "repoId": { "type": "string", "maxLength": 128 },
+        "repoFullName": { "type": "string", "maxLength": 120 },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "visibility": { "type": "string", "enum": ["public", "private"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["actorId", "actorUsername", "type", "summary", "visibility", "createdAt"]
+    },
+    "Report": {
+      "title": "Report",
+      "description": "Abuse or security moderation report.",
+      "type": "object",
+      "properties": {
+        "reporterId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "targetType": { "type": "string", "enum": ["repository", "user", "issue", "discussion", "security_advisory"] },
+        "targetId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "reason": { "type": "string", "minLength": 3, "maxLength": 1000 },
+        "status": { "type": "string", "enum": ["open", "resolved", "dismissed"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["reporterId", "targetType", "targetId", "reason", "status", "createdAt"]
+    },
+    "PlatformConfig": {
+      "title": "PlatformConfig",
+      "description": "Global platform configuration and announcement state.",
+      "type": "object",
+      "properties": {
+        "maintenanceMode": { "type": "boolean" },
+        "announcementBanner": { "type": "string", "maxLength": 300 },
+        "maxRepoSizeMb": { "type": "number" },
+        "maxUserStorageMb": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["maintenanceMode", "maxRepoSizeMb", "maxUserStorageMb", "updatedAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Security and administrative audit log entry.",
+      "type": "object",
+      "properties": {
+        "actorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "action": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "targetType": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "targetId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "details": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["actorId", "action", "targetType", "targetId", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/public_profiles/{uid}": {
+      "schema": { "$ref": "#/entities/PublicProfile" },
+      "description": "Public developer profiles isolated from private PII."
+    },
+    "/users_private/{uid}": {
+      "schema": { "$ref": "#/entities/PrivateUser" },
+      "description": "Private user PII, email, block/mute lists, and quota state."
+    },
+    "/usernames/{username}": {
+      "schema": { "$ref": "#/entities/UsernameReservation" },
+      "description": "Unique username reservation index."
+    },
+    "/repositories/{repoId}": {
+      "schema": { "$ref": "#/entities/Repository" },
+      "description": "Repositories metadata."
+    },
+    "/repositories/{repoId}/members/{uid}": {
+      "schema": { "$ref": "#/entities/RepositoryMember" },
+      "description": "Repository collaborators and roles."
+    },
+    "/repositories/{repoId}/issues/{issueId}": {
+      "schema": { "$ref": "#/entities/Issue" },
+      "description": "Repository issues."
+    },
+    "/repositories/{repoId}/issues/{issueId}/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/Comment" },
+      "description": "Comments on repository issues."
+    },
+    "/repositories/{repoId}/pull_requests/{prId}": {
+      "schema": { "$ref": "#/entities/PullRequest" },
+      "description": "Repository pull requests."
+    },
+    "/repositories/{repoId}/pull_requests/{prId}/reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/PullRequestReview" },
+      "description": "Pull request reviews and inline threads."
+    },
+    "/repositories/{repoId}/projects/{projectId}": {
+      "schema": { "$ref": "#/entities/ProjectTask" },
+      "description": "Repository project tasks."
+    },
+    "/repositories/{repoId}/discussions/{discussionId}": {
+      "schema": { "$ref": "#/entities/Discussion" },
+      "description": "Repository discussions."
+    },
+    "/repositories/{repoId}/discussions/{discussionId}/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/Comment" },
+      "description": "Comments on discussions."
+    },
+    "/repositories/{repoId}/releases/{releaseId}": {
+      "schema": { "$ref": "#/entities/Release" },
+      "description": "Repository releases."
+    },
+    "/repositories/{repoId}/deployments/{deploymentId}": {
+      "schema": { "$ref": "#/entities/Deployment" },
+      "description": "Static site deployments for repository."
+    },
+    "/repositories/{repoId}/workflow_runs/{runId}": {
+      "schema": { "$ref": "#/entities/WorkflowRun" },
+      "description": "CI/CD workflow configuration and run records."
+    },
+    "/packages/{packageId}": {
+      "schema": { "$ref": "#/entities/Package" },
+      "description": "Published packages."
+    },
+    "/organizations/{orgId}": {
+      "schema": { "$ref": "#/entities/Organization" },
+      "description": "Organizations."
+    },
+    "/organizations/{orgId}/members/{uid}": {
+      "schema": { "$ref": "#/entities/OrganizationMember" },
+      "description": "Organization members."
+    },
+    "/organizations/{orgId}/teams/{teamId}": {
+      "schema": { "$ref": "#/entities/Team" },
+      "description": "Organization teams."
+    },
+    "/stars/{edgeId}": {
+      "schema": { "$ref": "#/entities/InteractionEdge" },
+      "description": "Star edges between users and repositories."
+    },
+    "/watchers/{edgeId}": {
+      "schema": { "$ref": "#/entities/InteractionEdge" },
+      "description": "Watch edges between users and repositories."
+    },
+    "/bookmarks/{edgeId}": {
+      "schema": { "$ref": "#/entities/InteractionEdge" },
+      "description": "Bookmark edges between users and repositories."
+    },
+    "/followers/{edgeId}": {
+      "schema": { "$ref": "#/entities/InteractionEdge" },
+      "description": "Follower edges between developers."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/Notification" },
+      "description": "Per-user notification inbox."
+    },
+    "/activity_events/{eventId}": {
+      "schema": { "$ref": "#/entities/ActivityEvent" },
+      "description": "Developer activity feed events."
+    },
+    "/reports/{reportId}": {
+      "schema": { "$ref": "#/entities/Report" },
+      "description": "Moderation and security reports."
+    },
+    "/platform_config/{configId}": {
+      "schema": { "$ref": "#/entities/PlatformConfig" },
+      "description": "Global platform configuration."
+    },
+    "/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Audit log records."
+    }
+  }
+}
